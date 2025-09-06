@@ -1,5 +1,6 @@
 from dotenv import load_dotenv
 import os
+import streamlit as st
 
 # LangChain imports
 from langchain_text_splitters import CharacterTextSplitter
@@ -37,17 +38,17 @@ llm = ChatOpenAI(model="gpt-4o", temperature=0, openai_api_key=api_key)
 # -----------------------------
 # Load webpage and split into chunks
 # -----------------------------
-def load_and_chunk():
-    web_url = input("Enter url to summarize: ")
+def load_and_chunk(web_url):
+    # web_url = input("Enter url to summarize: ")
     loader = WebBaseLoader(web_url)
     # Load documents safely
     try:
         docs = loader.load()
     except Exception as e:
-        print("Error loading document: ", e)
+        st.write("Error loading document: ", e)
         docs = []
     if not docs:
-        print("No content to process")
+        st.write("No content to process")
         exit()
 
     # Break documents into smaller chunks (1000 tokens each, no overlap)
@@ -56,7 +57,7 @@ def load_and_chunk():
         chunk_overlap=0
 )
     chunks = text_splitter.split_documents(docs)
-    return [web_url, chunks]
+    return web_url, chunks
 
 
 def summarize_chunks(chunks, llm, web_url):
@@ -121,7 +122,7 @@ def update_faiss(summary, embedding):
         my_vectorstore.save_local("faiss_index")
 
 
-def build_answer_chain():
+def build_answer_chain(query, chat_history=[]):
     my_vectorstore = FAISS.load_local("faiss_index", embedding, allow_dangerous_deserialization=True)
     retriever = my_vectorstore.as_retriever()
     # Prompt for reformulating follow-up questions into standalone ones
@@ -133,20 +134,66 @@ def build_answer_chain():
 
     # Prompt for answering based on retrieved context
     qa_prompt = ChatPromptTemplate.from_messages([
-        ("system", "You are a careful assistant that answers based only on the provided context. "
-                "If you don't know, say so. Be short and concise. Context: {context}"),
+        ("system", "You are a careful assistant that answers based only on the provided articles. "
+                "If you don't know, you must say that. Be short and concise. Articles: {context}"),
         ("human", "{input}")
     ])
 
     # Create history-aware retriever (handles conversation memory)
     history_aware_retriever = create_history_aware_retriever(llm, retriever, contextualize_q_prompt)
-
+    docs = history_aware_retriever.invoke({"input": query, "chat_history": chat_history})
+    
     # Create QA chain (retriever → LLM)
     qa_chain = create_stuff_documents_chain(llm, qa_prompt)
 
     # Full retrieval-augmented generation pipeline
     rag_chain = create_retrieval_chain(history_aware_retriever, qa_chain)
-    return rag_chain
+    return rag_chain, docs
+
+def format_doc_for_translation(doc, language):
+    return {"text": doc["page_content"], "language": language}
+
+def translate_article(language, chunks, web_url):
+    # Create prompt templates
+    translate_prompt = ChatPromptTemplate.from_messages([
+        ("system", "You are a highly efficient translator who translates articles into the given language, maintaining meaning and preserving the tone."),
+        ("human", "Translate the text below into {language}:\n\n{text}")
+    ])
+
+    reduce_prompt = PromptTemplate.from_template(
+        "Chain together the following translations into one cohesive translated article:\n{text}"
+    )
+
+    # LLM chains
+    translate_chain = LLMChain(llm=llm, prompt=translate_prompt)
+    reduce_chain = LLMChain(llm=llm, prompt=reduce_prompt)
+
+    combine_translations_chain = StuffDocumentsChain(
+        llm_chain=reduce_chain,
+        document_variable_name="text"
+    )
+
+    reduce_documents_chain = ReduceDocumentsChain(
+        combine_documents_chain=combine_translations_chain,
+        collapse_documents_chain=combine_translations_chain,
+        token_max=1000
+    )
+
+    map_reduce_chain = MapReduceDocumentsChain(
+        llm_chain=translate_chain,
+        reduce_documents_chain=reduce_documents_chain,
+        document_variable_name="text",  # must match StuffDocumentsChain
+        return_intermediate_steps=False
+    )
+
+    # **Use Document objects directly**
+    docs_input = [{"text": chunk.page_content, "language": language} for chunk in chunks]
+
+    # Invoke the MapReduce chain
+    result = map_reduce_chain.invoke(docs_input)
+
+    # Return as a Document
+    return Document(page_content=result["output_text"], metadata={"source": web_url})
 
 def start_chat():
     chat_history = []
@@ -154,27 +201,28 @@ def start_chat():
         user_option = input("Pick an option:\n 1) Summarize a text\n 2) Ask about a saved text\n Type 'exit' to quit: ")
 
         if user_option == "exit":
-            print("Goodbye 👋")
+            st.write("Goodbye 👋")
             break
 
         elif user_option == "1":
             url_chunks = load_and_chunk()
             summary = summarize_chunks(url_chunks[1], llm, url_chunks[0])
             update_faiss(summary, embedding)
-            print("\n--- Summary ---\n", summary.page_content, "\n")
+            st.write("\n--- Summary ---\n", summary.page_content, "\n")
 
         elif user_option == "2":
-            rag_chain = build_answer_chain()
             query = input("User: ")
-            result = rag_chain.invoke({"input": query, "chat_history": chat_history})
-            print("Assistant: ", result["answer"])
+            rag_chain = build_answer_chain(query)
+            result = rag_chain[0].invoke({"input": query, "chat_history": chat_history})
+            st.write("Assistant: ", result["answer"])
             chat_history.append(("user", query))
             chat_history.append(("assistant", result["answer"]))
+
+            
 
         else:
             print("Invalid input, try again.")
 
-start_chat()
 
 
 
