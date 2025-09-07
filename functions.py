@@ -1,6 +1,7 @@
 from dotenv import load_dotenv
 import os
 import streamlit as st
+import asyncio
 
 # LangChain imports
 from langchain_text_splitters import CharacterTextSplitter
@@ -53,8 +54,8 @@ def load_and_chunk(web_url):
 
     # Break documents into smaller chunks (1000 tokens each, no overlap)
     text_splitter = CharacterTextSplitter.from_tiktoken_encoder(
-        chunk_size=1000,
-        chunk_overlap=0
+        chunk_size=3000,
+        chunk_overlap=200
 )
     chunks = text_splitter.split_documents(docs)
     return web_url, chunks
@@ -150,51 +151,76 @@ def build_answer_chain(query, chat_history=[]):
     rag_chain = create_retrieval_chain(history_aware_retriever, qa_chain)
     return rag_chain, docs
 
-def format_doc_for_translation(doc, language):
-    return {"text": doc["page_content"], "language": language}
+async def translate_article(language, chunks, web_url):
+    map_prompt = PromptTemplate(input_variables=["context", "language"], template = "Translate the following text to {language}:\n\n{context}")
+    map_chain = LLMChain(llm = llm, prompt = map_prompt)
 
-def translate_article(language, chunks, web_url):
-    # Create prompt templates
-    translate_prompt = ChatPromptTemplate.from_messages([
-        ("system", "You are a highly efficient translator who translates articles into the given language, maintaining meaning and preserving the tone."),
-        ("human", "Translate the text below into {language}:\n\n{text}")
-    ])
+    reduce_prompt = PromptTemplate(input_variables = ["context", "language"], template = "Combine the following translated chunks into a single coherent translation in {language}:\n\n {context}")
+    reduce_chain = LLMChain(llm = llm, prompt = reduce_prompt)
 
-    reduce_prompt = PromptTemplate.from_template(
-        "Chain together the following translations into one cohesive translated article:\n{text}"
-    )
-
-    # LLM chains
-    translate_chain = LLMChain(llm=llm, prompt=translate_prompt)
-    reduce_chain = LLMChain(llm=llm, prompt=reduce_prompt)
-
-    combine_translations_chain = StuffDocumentsChain(
+    reduce_docs_chain = StuffDocumentsChain(
         llm_chain=reduce_chain,
-        document_variable_name="text"
+        document_variable_name="context"
     )
 
-    reduce_documents_chain = ReduceDocumentsChain(
-        combine_documents_chain=combine_translations_chain,
-        collapse_documents_chain=combine_translations_chain,
-        token_max=1000
+    reduce_docs_chain = ReduceDocumentsChain(
+        combine_documents_chain = reduce_docs_chain,
+        collapse_documents_chain = reduce_docs_chain, 
+        token_max = 4000
     )
 
     map_reduce_chain = MapReduceDocumentsChain(
-        llm_chain=translate_chain,
-        reduce_documents_chain=reduce_documents_chain,
-        document_variable_name="text",  # must match StuffDocumentsChain
-        return_intermediate_steps=False
-    )
+        llm_chain = map_chain, 
+        reduce_documents_chain = reduce_docs_chain,
+        document_variable_name = "context"
+                                            )
+    
+    translated_chunks = []
 
-    # **Use Document objects directly**
-    docs_input = [{"text": chunk.page_content, "language": language} for chunk in chunks]
+    for chunk in chunks:
+        # Each chunk is a Document, so chunk.page_content has the text
+        prompt_input = {
+            "context": chunk.page_content,
+            "language": language
+        }
+        translated_text = map_chain.run(prompt_input)
+        translated_chunks.append(Document(page_content=translated_text, metadata=chunk.metadata))
+        st.write(translated_text)
 
-    # Invoke the MapReduce chain
-    result = map_reduce_chain.invoke(docs_input)
+def rewrite_article(style, chunks, url):
+    SUPPORTED_LANGUAGES = [
+    "english", "spanish", "french", "german", "italian",
+    "portuguese", "hindi", "chinese", "japanese", "korean"
+   ]
+    if "translate" in style:
+        for lang in SUPPORTED_LANGUAGES:
+            if lang in style:
+                asyncio.run(translate_article(lang, chunks, url))
+    else:
+        map_prompt = PromptTemplate(input_variables = ["style", "context"], template = "Rewrite the following article chunk to be {style}: {context}. Remember to preserve the actual meaning of the text and all important info, keep it concise")
+        reduce_prompt = PromptTemplate(input_variables = ["style", "context"], template = "Take the following rewritten chunks and chain them together to be {style}: {context} to make one coherent rewritten article. Make sure the article flows well.")
 
-    # Return as a Document
-    return Document(page_content=result["output_text"], metadata={"source": web_url})
+        map_chain = LLMChain(llm = llm, prompt = map_prompt)
+        reduce_chain = LLMChain(llm = llm, prompt = reduce_prompt)
 
+        reduce_docs_chain = StuffDocumentsChain(llm_chain = reduce_chain, document_variable_name = "context")
+
+        my_reduce_docs_chain = ReduceDocumentsChain(
+            combine_documents_chain = reduce_docs_chain,
+            collapse_documents_chain = reduce_docs_chain, 
+            token_max = 4000
+
+        )
+
+        map_reduce_chain = MapReduceDocumentsChain(llm_chain = map_chain, 
+                                                   reduce_documents_chain = my_reduce_docs_chain,
+                                                   document_variable_name = "context")
+        
+        result = map_reduce_chain.invoke({"input_documents": chunks, "style": style})
+        st.write(result["output_text"])
+
+
+    
 def start_chat():
     chat_history = []
     while True:

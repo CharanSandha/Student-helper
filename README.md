@@ -1,48 +1,51 @@
-Document Helper is a lightweight Streamlit app for document understanding, providing summarization, Q&A, and translation.
+A lightweight Streamlit app for document understanding: summarization, Q&A, translation, and text rewriting
 
-Why it exists?
+## Why it exists?
 Manually extracting insights from web articles can be time-consuming and tedious.
-This project leverages OpenAI’s LLMs along with LangChain to let users:
-
-Summarize web articles
-Ask questions about the content
-Translate articles into different languages (coming soon)
-All in a single easy-to-use Streamlit UI—simply input a web article URL to get started.
+This app leverages OpenAI’s LLMs and LangChain to let users:
+- Summarize web articles
+- Ask questions about content
+- Translate articles 
+- Rewrite articles based on tone, reading level, or age group preference
+All in a single, easy-to-use Streamlit UI—just input a web article URL.
 
 ## Demo
-**Summarization Feature**
+### Summarization Feature
 ![Document Helper Summarization](images/demo1.png)
 
-**Translation Feature**
+### Translation Feature
 ![Document Helper Translation](images/demo2.png)
 
-Features
+### Text Rewriting Feature
+Original text:
+"Healthy eating is not about imposing strict dietary restrictions, striving for an unrealistic body weight, or depriving oneself of favorite foods. Instead, it involves consuming balanced meals that enhance well-being, increase energy levels, improve health, and elevate mood"
 
-Implemented:
--Summarization of long articles using MapReduce to reduce token usage per LLM call
--Translation of text (in progress)
--Use of FAISS vectorstore to store embeddings for each chunk and answer questions using the most relevant info from the knowledge base
+**Kid-friendly rewrite:**
+"Eating healthy doesn’t mean you have to stop eating your favorite foods or try to be super skinny. It means eating different kinds of foods that help you feel good, have energy, stay healthy, and be happy."
 
-Future Directions:
+Original text:
+"Try to eat a variety of fresh foods and reduce packaged foods whenever possible."
 
-Enhanced Document Processing
--Translate long articles to multiple languages using MapReduce
--Multi-format support: PDFs, Word docs, or scanned images
--Smarter chunking: semantic splitting based on paragraphs or headings
+**Professional rewrite:**
+“Aim to reduce the consumption of packaged and heavily processed foods, opting instead for fresh ingredients whenever feasible.”
 
-Advanced AI Capabilities
--Flexible output: bullet points, detailed summaries
--Sentiment analysis on documents
 
-UX Improvements
--Upload multiple documents and manage them in a dashboard
--Search and filter in the knowledge base
+## Features
+-Summarization using MapReduce
+-Translation to multiple languages
+-FAISS vectorstore for Q&A
+-Text rewriting for different audiences, tones, and purposes
 
-Insights & Analytics
--Track which topics are summarized or queried the most
--Compare original and translated articles for accuracy
+## Future Directions
+- Multi-format support (PDFs, Word, images)
+- Smarter chunking: semantic splitting
+- Flexible output (bullet points, detailed summaries)
+- Sentiment analysis
+- Dashboard to manage multiple documents
+- Search and filter in knowledge base
+- Compare original and translated articles for accuracy
 
-Tech Stack
+## Tech Stack
 Frontend: Streamlit
 LLM Management: LangChain
 LLM: OpenAI GPT-4o

@@ -1,7 +1,26 @@
 import streamlit as st
-from functions import load_and_chunk, summarize_chunks, update_faiss, build_answer_chain, translate_article, embedding, llm
+from functions import load_and_chunk, summarize_chunks, update_faiss, build_answer_chain, translate_article, rewrite_article, embedding, llm
+import asyncio
 
 st.set_page_config(page_title="Student Article Helper")
+
+# st.markdown(
+#     """
+#     <style>
+#     .stApp {
+#         background-color: #ADD8E6;  /* your desired color */
+#         color: #000000;
+#     }
+#     /* Style all radio button labels */
+#     div[role="main_action_radio"] label {
+#         color: red;  
+#         font-weight: bold;
+#         font-size: 18px;
+#     }
+#     </style>
+#     """,
+#     unsafe_allow_html=True
+# )
 st.title("Student Article Helper")
 st.write("Welcome! Use this app to help with student articles.")
 
@@ -17,7 +36,8 @@ action = st.radio(
     (
         "Summarize an article",
         "Get an answer from your knowledge base",
-        "Translate article to another language"
+        "Translate article to another language",
+        "Rewrite article"
     ),
     key="main_action_radio"
 )
@@ -68,7 +88,19 @@ elif action == "Translate article to another language":
     url = st.text_input("Enter the URL of the article to translate:", key="translate_url")
     if url:
         web_url, chunks = load_and_chunk(url)
-        translation = translate_article(language, chunks, url)
-        st.write(translation.page_content)
+        asyncio.run(translate_article(language, chunks, url))
     else:
         st.write("Please enter url to proceed.")
+
+elif action == "Rewrite article":
+
+    url = st.text_input("Enter the url of the article you would like to rewrite: ", key = "rewrite_url")
+    if url:
+        url, chunks = load_and_chunk(url)
+        style = st.text_input("Enter how you would like to rewrite the article (ex. 'simpler, suitable for a 5th grader' or 'more professional and formal' or 'translate to spanish'))")
+        rewrite_article(style, chunks, url)
+    else:
+        st.info("Please enter a URL to proceed.")
+
+    
+
