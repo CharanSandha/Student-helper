@@ -7,6 +7,7 @@ This app leverages OpenAI’s LLMs and LangChain to let users:
 - Ask questions about content
 - Translate articles 
 - Rewrite articles based on tone, reading level, or age group preference
+
 All in a single, easy-to-use Streamlit UI—just input a web article URL.
 
 ## Demo
@@ -29,12 +30,18 @@ Original text:
 **Professional rewrite:**
 “Aim to reduce the consumption of packaged and heavily processed foods, opting instead for fresh ingredients whenever feasible.”
 
+**Most similar docs:**
+-Provides semantic search over a knowledge base of articles using embeddings and FAISS.
+-Accepts a new article (text or URL) and returns the most similar articles already in the database.
+-Filters self-matches or near-duplicate entries to ensure relevant results.
+-Helps users quickly discover related content without manually browsing the entire knowledge base.
 
 ## Features
 -Summarization using MapReduce
 -Translation to multiple languages
 -FAISS vectorstore for Q&A
 -Text rewriting for different audiences, tones, and purposes
+-Find most similar docs easily 
 
 ## Future Directions
 - Multi-format support (PDFs, Word, images)

@@ -1,5 +1,5 @@
 import streamlit as st
-from functions import load_and_chunk, summarize_chunks, update_faiss, build_answer_chain, translate_article, rewrite_article, embedding, llm
+from functions import load_and_chunk, summarize_chunks, update_faiss, build_answer_chain, translate_article, rewrite_article, tone_detection, most_similar_docs, embedding, llm
 import asyncio
 
 st.set_page_config(page_title="Student Article Helper")
@@ -24,83 +24,75 @@ st.set_page_config(page_title="Student Article Helper")
 st.title("Student Article Helper")
 st.write("Welcome! Use this app to help with student articles.")
 
-# Keep chat history in session state
+# Initialize session state
 if "chat_history" not in st.session_state:
     st.session_state.chat_history = []
 
-
+if "article_text" not in st.session_state:
+    st.session_state.article_text = None
 
 # --------------------- Main action ---------------------
-action = st.radio(
-    "What do you want to do?",
-    (
-        "Summarize an article",
-        "Get an answer from your knowledge base",
-        "Translate article to another language",
-        "Rewrite article"
-    ),
-    key="main_action_radio"
-)
-# --------------------- Summarize an article ---------------------
-if action == "Summarize an article":
-    url = st.text_input("Enter the URL of the article to summarize:", key="summary_url")
-    if url:
-        url_chunks = load_and_chunk(url)
-        summary = summarize_chunks(url_chunks[1], llm, url_chunks[0])
+url = st.text_input("Enter article URL")
+
+if url and st.session_state.article_text is None:
+    url, article_text = load_and_chunk(url)
+    st.session_state.article_text = article_text
+
+feature = st.radio("Choose feature:", ["Summary", "Rewrite", "Translation", "Q&A", "Tone Detection", "Check Similarity"])
+
+# Only proceed if we have article text
+if st.session_state.article_text:
+    text = st.session_state.article_text
+    update_faiss(text, embedding)
+
+
+    # --------------------- Summarize an article ---------------------
+    if feature == "Summary":
+        summary = summarize_chunks(text, llm, url)
         update_faiss(summary, embedding)
         st.markdown("---")
         st.subheader("Summary")
         st.write(summary.page_content)
-    else:
-        st.info("Please enter a URL to proceed.")
 
-# --------------------- Get an answer from KB ---------------------
-elif action == "Get an answer from your knowledge base":
-    question = st.text_input("Enter your question:", key="kb_question")
-    if question:
-        st.markdown(f"**You asked:** {question}")
+    # --------------------- Get an answer from KB ---------------------
+    elif feature == "Q&A":
+        question = st.text_input("Enter your question:", key="kb_question")
+        if question:
+            st.markdown(f"**You asked:** {question}")
+            rag_chain, docs = build_answer_chain(question, chat_history=st.session_state.chat_history)
+            result = rag_chain.invoke({"input": question, "chat_history": st.session_state.chat_history})
+            st.markdown("**Assistant:**")
+            st.write(result["answer"])
+            st.session_state.chat_history.append(("user", question))
+            st.session_state.chat_history.append(("assistant", result["answer"]))
+            if "" not in result["answer"]:
+                sources = {doc.metadata.get("source", "Unknown") for doc in docs}
+                st.markdown("**This answer came from:**")
+                st.write(", ".join(sources))
 
-        # Build RAG chain and retrieve documents
-        rag_chain, docs = build_answer_chain(question, chat_history=st.session_state.chat_history)
+    elif feature == "Translation":
+        language = st.radio(
+            "Choose language",
+            ("Spanish", "French", "Chinese", "Hindi", "Japanese"),
+            key="language_radio"
+        )
+        asyncio.run(translate_article(language, text, url))
 
-        # Get answer from chain
-        result = rag_chain.invoke({"input": question, "chat_history": st.session_state.chat_history})
-        st.markdown("**Assistant:**")
-        st.write(result["answer"])
+    elif feature == "Rewrite":
+        style = st.text_input(
+            "Enter how you would like to rewrite the article (ex. 'simpler, suitable for a 5th grader' or 'more professional and formal' or 'translate to spanish')"
+        )
+        rewrite_article(style, text, url)
 
-        # Update chat history
-        st.session_state.chat_history.append(("user", question))
-        st.session_state.chat_history.append(("assistant", result["answer"]))
-
-        
-        if "" not in result["answer"]:
-            sources = {doc.metadata.get("source", "Unknown") for doc in docs}
-            st.markdown("**This answer came from:**")
-            st.write(", ".join(sources))
-
-
-elif action == "Translate article to another language":
-    language = st.radio(
-        "Choose language",
-        ("Spanish", "French", "Chinese", "Hindi", "Japanese"),
-        key="language_radio"
-    )
-    url = st.text_input("Enter the URL of the article to translate:", key="translate_url")
-    if url:
-        web_url, chunks = load_and_chunk(url)
-        asyncio.run(translate_article(language, chunks, url))
-    else:
-        st.write("Please enter url to proceed.")
-
-elif action == "Rewrite article":
-
-    url = st.text_input("Enter the url of the article you would like to rewrite: ", key = "rewrite_url")
-    if url:
-        url, chunks = load_and_chunk(url)
-        style = st.text_input("Enter how you would like to rewrite the article (ex. 'simpler, suitable for a 5th grader' or 'more professional and formal' or 'translate to spanish'))")
-        rewrite_article(style, chunks, url)
-    else:
-        st.info("Please enter a URL to proceed.")
-
+    elif feature == "Tone Detection":
+        tone_detection(text)
     
+    elif feature == "Check Similarity":
+        most_similar = most_similar_docs(text, 6)
+        sliced = dict(list(most_similar.items())[1:])
+        for url, score in sliced.items():
+            st.write(f"{url} — similarity: {score:.2f}")
 
+
+else:
+    st.info("Please enter a URL to load an article first.")

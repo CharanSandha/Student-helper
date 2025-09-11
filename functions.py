@@ -1,9 +1,13 @@
 from dotenv import load_dotenv
 import os
 import streamlit as st
+from pydantic import BaseModel
 import asyncio
+from collections import defaultdict
+from sklearn.metrics.pairwise import cosine_similarity
 
 # LangChain imports
+from langchain.output_parsers import PydanticOutputParser
 from langchain_text_splitters import CharacterTextSplitter
 from langchain.chains.combine_documents.map_reduce import MapReduceDocumentsChain, ReduceDocumentsChain
 from langchain.chains import create_retrieval_chain, create_history_aware_retriever, LLMChain
@@ -58,6 +62,10 @@ def load_and_chunk(web_url):
         chunk_overlap=200
 )
     chunks = text_splitter.split_documents(docs)
+    for chunk in chunks:
+        if not hasattr(chunk, "metadata") or chunk.metadata is None:
+            chunk.metadata = {}
+        chunk.metadata = {"source": web_url}
     return web_url, chunks
 
 
@@ -111,16 +119,32 @@ def summarize_chunks(chunks, llm, web_url):
 # -----------------------------
 # Save or update FAISS vector store
 # -----------------------------
-def update_faiss(summary, embedding):
+def update_faiss(docs, embedding):
+    """
+    Add new documents to FAISS index only if they are not already present.
+    """
+    if not isinstance(docs, list):
+        docs = [docs]
+
     if not os.path.exists("faiss_index"):
         # First time → create new index
-        my_vectorstore = FAISS.from_documents([summary], embedding)
-        my_vectorstore.save_local("faiss_index")
+        my_vectorstore = FAISS.from_documents(docs, embedding)
     else:
-        # Load existing index and add new summary
+        # Load existing index once
         my_vectorstore = FAISS.load_local("faiss_index", embedding, allow_dangerous_deserialization=True)
-        my_vectorstore.add_documents([summary])
-        my_vectorstore.save_local("faiss_index")
+
+        # Extract existing contents from docstore
+        existing_texts = [d.page_content for d in my_vectorstore.docstore._dict.values()]
+
+        # Only keep docs that aren’t already in the index
+        new_docs = [doc for doc in docs if doc.page_content not in existing_texts]
+
+        if new_docs:
+            my_vectorstore.add_documents(new_docs)
+
+    # Save updated index
+    my_vectorstore.save_local("faiss_index")
+
 
 
 def build_answer_chain(query, chat_history=[]):
@@ -219,8 +243,72 @@ def rewrite_article(style, chunks, url):
         result = map_reduce_chain.invoke({"input_documents": chunks, "style": style})
         st.write(result["output_text"])
 
+def tone_detection(chunks):
+    class ToneAnalysis(BaseModel):
+        tone: str
+        justification: str
+    parser = PydanticOutputParser(pydantic_object=ToneAnalysis)
+    tone_prompt = ChatPromptTemplate.from_template("""
+    Analyze the following text and return the tone analysis.
+
+    {text}
+
+    {format_instructions}
+    """).partial(format_instructions=parser.get_format_instructions())
+
+
+    tone_chain = tone_prompt | llm | parser
+    result = tone_chain.invoke({"text": chunks})
+    st.write(result.tone)
+    st.write(result.justification)
+    
+def most_similar_docs(chunks, top_k = 5):
+    #compare the chunks of new article to the existing chunks
+    #if similar 
+    embedding_model = OpenAIEmbeddings()
+    new_embeddings = embedding_model.embed_documents([chunk.page_content for chunk in chunks])
+    my_vectorstore = FAISS.load_local("faiss_index", embedding, allow_dangerous_deserialization = True)
+    #store similarity scores per document
+    doc_sims = defaultdict(list)
+
+    for chunk, emb in zip(chunks, new_embeddings):
+        results = my_vectorstore.similarity_search_by_vector(emb, k=top_k)
+        for doc in results:
+            url = doc.metadata["source"]
+            score = doc.metadata.get("score", 1.0)
+            doc_sims[url].append(score)
+    
+    avg_doc_sims = {url: sum(scores)/len(scores) for url, scores in doc_sims.items()}
+
+    most_similar = dict(sorted(avg_doc_sims.items(), key = lambda x: x[1], reverse = True))
+    
+    return most_similar
+    #compare the new_embeddings to the existing_embeddings and find the new embeddings that are really similar to existing ones 
+
+
 
     
+
+#     {
+#   new_chunk_1: [(existing_chunk_1, 0.8), (existing_chunk_2, 0.9), ...],
+#   new_chunk_2: [(existing_chunk_1, 0.7), (existing_chunk_2, 0.5), ...],
+#   ...
+# }
+    
+    #find the similarity of each chunk to each existing chunk
+    #then get the chunks from each url and compute the average similarities
+    #then average the similarities for each doc 
+        
+    
+    
+    
+#wanna find the 
+
+
+
+    
+
+
 def start_chat():
     chat_history = []
     while True:
